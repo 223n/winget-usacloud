@@ -1,5 +1,5 @@
 # Created using wingetcreate
-# yaml-language-server: $schema=https://aka.ms/winget-manifest.installer.1.9.0.schema.json
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.installer.1.12.0.schema.json
 
 PackageIdentifier: sacloud.usacloud
 PackageVersion: 1.21.0
@@ -18,4 +18,4 @@ Installers:
     InstallerUrl: https://github.com/sacloud/usacloud/releases/download/v1.21.0/usacloud_windows-386.zip
     InstallerSha256: 3EC083C2C951AA555332F11D3F07D9B21FC7465DA25DB729E63896114C633666
 ManifestType: installer
-ManifestVersion: 1.9.0
+ManifestVersion: 1.12.0
