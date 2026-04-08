@@ -1,0 +1,39 @@
+name: winget-pkgsへ初回登録
+run-name: winget-pkgsへ初回登録 (v${{ inputs.version }})
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "登録するバージョン"
+        required: true
+        default: "1.21.0"
+
+jobs:
+  submit:
+    name: 初回マニフェスト送信
+    runs-on: windows-latest
+    steps:
+      - name: チェックアウト
+        uses: actions/checkout@v4
+
+      - name: wingetcreateをインストール
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri https://aka.ms/wingetcreate/latest -OutFile wingetcreate.exe
+
+      - name: マニフェストを生成しPRを送信
+        shell: pwsh
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          $urls = @(
+            "https://github.com/sacloud/usacloud/releases/download/v${env:VERSION}/usacloud_windows-amd64.zip",
+            "https://github.com/sacloud/usacloud/releases/download/v${env:VERSION}/usacloud_windows-arm64.zip",
+            "https://github.com/sacloud/usacloud/releases/download/v${env:VERSION}/usacloud_windows-386.zip"
+          )
+          ./wingetcreate.exe new `
+            --id sacloud.usacloud `
+            --version $env:VERSION `
+            --urls $urls `
+            --submit --token ${{ secrets.WINGET_PAT }}
