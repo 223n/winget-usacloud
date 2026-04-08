@@ -1,0 +1,100 @@
+name: winget-pkgsへ公開
+run-name: winget-pkgsへ公開 (v${{ inputs.version }})
+
+on:
+  schedule:
+    # 毎日 9:00 UTC (JST 18:00) にチェック
+    - cron: "0 9 * * *"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "バージョン指定（空欄で最新リリースを自動検出）"
+        required: false
+
+jobs:
+  # スケジュール実行 or バージョン未指定時: 最新バージョンを取得して workflow_dispatch で再トリガー
+  detect:
+    name: 最新バージョン検出
+    if: inputs.version == ''
+    runs-on: ubuntu-latest
+    steps:
+      - name: チェックアウト
+        uses: actions/checkout@v4
+
+      - name: 最新リリースバージョンを取得
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION=$(gh release view --repo sacloud/usacloud --json tagName -q '.tagName' | sed 's/^v//')
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "Latest version: ${VERSION}"
+
+      - name: 登録済みバージョンか確認
+        id: check
+        run: |
+          MANIFEST_DIR="manifests/s/sacloud/usacloud/${{ steps.release.outputs.version }}"
+          if [ -d "$MANIFEST_DIR" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "Version ${{ steps.release.outputs.version }} already exists. Skipping."
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+            echo "New version ${{ steps.release.outputs.version }} detected."
+          fi
+
+      - name: 公開ワークフローをトリガー
+        if: steps.check.outputs.skip == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh workflow run publish.yml \
+            --field version=${{ steps.release.outputs.version }}
+
+  # バージョン指定時: マニフェスト生成 & PR送信
+  publish:
+    name: マニフェスト生成・PR送信
+    if: inputs.version != ''
+    runs-on: windows-latest
+    steps:
+      - name: チェックアウト
+        uses: actions/checkout@v4
+
+      - name: wingetcreateをインストール
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri https://aka.ms/wingetcreate/latest -OutFile wingetcreate.exe
+
+      - name: マニフェストを生成
+        shell: pwsh
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          $urls = @(
+            "https://github.com/sacloud/usacloud/releases/download/v${env:VERSION}/usacloud_windows-amd64.zip",
+            "https://github.com/sacloud/usacloud/releases/download/v${env:VERSION}/usacloud_windows-arm64.zip",
+            "https://github.com/sacloud/usacloud/releases/download/v${env:VERSION}/usacloud_windows-386.zip"
+          )
+          ./wingetcreate.exe update sacloud.usacloud `
+            --version $env:VERSION `
+            --urls $urls `
+            --out manifests/s/sacloud/usacloud/$env:VERSION
+
+      - name: winget-pkgsへPRを送信
+        shell: pwsh
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          ./wingetcreate.exe submit `
+            --token ${{ secrets.WINGET_PAT }} `
+            manifests/s/sacloud/usacloud/$env:VERSION
+
+      - name: マニフェストをコミット
+        shell: bash
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add "manifests/s/sacloud/usacloud/${VERSION}"
+          git commit -m "Add manifest for v${VERSION}"
+          git push
