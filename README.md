@@ -13,12 +13,14 @@ PRを送信します。
 
 ## 仕組み
 
-1. 毎日18:00（JST）にusacloudの最新リリースを確認
-1. 新バージョンが検出された場合、`wingetcreate`でマニフェストを生成
-1. `microsoft/winget-pkgs`へPRを自動送信
-1. 生成したマニフェストをこのリポジトリにコミット
+2段構成のワークフロー（`publish.yml`）で自動配信を行っています。
+
+1. **detect job**（毎日18:00 JST）: usacloudの最新リリースを確認し、未登録バージョンの場合`workflow_dispatch`でpublish jobを再トリガー
+2. **publish job**: `wingetcreate`でマニフェストを生成し、`microsoft/winget-pkgs`へPRを自動送信、生成したマニフェストをこのリポジトリにコミット
 
 手動実行でバージョンを指定して実行することもできます。
+
+初回登録用に `initial-submit.yml` も用意しています（手動実行のみ）。
 
 ## ディレクトリ構成
 
@@ -27,7 +29,8 @@ manifests/s/sacloud/usacloud/
 └── <version>/
     ├── sacloud.usacloud.yaml
     ├── sacloud.usacloud.installer.yaml
-    └── sacloud.usacloud.locale.en-US.yaml
+    ├── sacloud.usacloud.locale.en-US.yaml
+    └── sacloud.usacloud.locale.ja-JP.yaml
 ```
 
 ## セットアップ
