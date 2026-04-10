@@ -19,7 +19,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: チェックアウト
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6
 
       - name: 最新リリースバージョンを取得
         id: release
@@ -57,7 +57,7 @@ jobs:
     runs-on: windows-latest
     steps:
       - name: チェックアウト
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6
 
       - name: wingetcreateをインストール
         shell: pwsh
