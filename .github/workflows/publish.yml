@@ -83,7 +83,7 @@ jobs:
           ./wingetcreate.exe update sacloud.usacloud `
             --version $env:VERSION `
             --urls $urls `
-            --out manifests/s/sacloud/usacloud/$env:VERSION `
+            --out . `
             --submit `
             --token $env:WINGET_PAT
 
