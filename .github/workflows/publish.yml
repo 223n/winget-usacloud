@@ -17,6 +17,9 @@ jobs:
     name: 最新バージョン検出
     if: inputs.version == ''
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: write
     steps:
       - name: チェックアウト
         uses: actions/checkout@v6
@@ -55,6 +58,8 @@ jobs:
     name: マニフェスト生成・PR送信
     if: inputs.version != ''
     runs-on: windows-latest
+    permissions:
+      contents: write
     steps:
       - name: チェックアウト
         uses: actions/checkout@v6
