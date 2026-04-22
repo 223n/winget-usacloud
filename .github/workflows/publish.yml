@@ -1,5 +1,5 @@
 name: winget-pkgsへ公開
-run-name: winget-pkgsへ公開 (v${{ inputs.version }})
+run-name: ${{ inputs.version != '' && format('winget-pkgsへ公開（v{0}）', inputs.version) || '最新バージョンの検出' }}
 
 on:
   schedule:
