@@ -90,6 +90,22 @@ jobs:
           VERSION: ${{ inputs.version }}
         run: |
           winget validate --manifest "manifests/s/sacloud/usacloud/$env:VERSION"
+          # winget validate は「警告ありで成功」した場合に非ゼロ終了コード (-1978335192) を返す。
+          # 警告は許容し、検証失敗 (-1978335191 など) のみエラーとして扱う。
+          # 参考: microsoft/winget-pkgs Tools/SandboxTest.ps1 の終了コード判定
+          $code = $LASTEXITCODE
+          if ($code -eq 0) {
+            Write-Host "マニフェスト検証に成功しました。"
+            exit 0
+          }
+          elseif ($code -eq -1978335192) {
+            Write-Host "::warning::マニフェスト検証は警告ありで成功しました。"
+            exit 0
+          }
+          else {
+            Write-Host "::error::マニフェスト検証に失敗しました (exit code: $code)。"
+            exit 1
+          }
 
       - name: マニフェストでテストインストール
         shell: pwsh
