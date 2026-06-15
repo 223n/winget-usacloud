@@ -73,15 +73,18 @@ jobs:
         shell: pwsh
         env:
           VERSION: ${{ inputs.version }}
+          WINGET_PAT: ${{ secrets.WINGET_PAT }}
         run: |
           $urls = @(
             "https://github.com/sacloud/usacloud/releases/download/v${env:VERSION}/usacloud_windows-amd64.zip",
             "https://github.com/sacloud/usacloud/releases/download/v${env:VERSION}/usacloud_windows-arm64.zip",
             "https://github.com/sacloud/usacloud/releases/download/v${env:VERSION}/usacloud_windows-386.zip"
           )
+          # --token を渡すと、GitHubリリースから ReleaseDate / ReleaseNotesUrl を自動補完する
           ./wingetcreate.exe update sacloud.usacloud `
             --version $env:VERSION `
             --urls $urls `
+            --token $env:WINGET_PAT `
             --out .
 
       - name: マニフェストを検証
