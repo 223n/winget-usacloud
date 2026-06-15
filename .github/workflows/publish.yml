@@ -57,6 +57,11 @@ jobs:
   publish:
     name: マニフェスト生成・PR送信
     if: inputs.version != ''
+    # 同一バージョンのpublishが同時に走ると、PR二重送信やgit pushの競合が起きうるため直列化する。
+    # cancel-in-progress: false … 実行中のジョブは止めず、後続を待機させる（送信途中での中断を避ける）。
+    concurrency:
+      group: winget-publish-${{ inputs.version }}
+      cancel-in-progress: false
     runs-on: windows-latest
     permissions:
       contents: write
