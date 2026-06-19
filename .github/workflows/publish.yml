@@ -92,6 +92,65 @@ jobs:
             --token $env:WINGET_PAT `
             --out .
 
+      - name: en-US localeにdefaultLocale由来の項目を補完
+        shell: pwsh
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          # wingetcreateの--tokenはdefaultLocale(ja-JP)にのみPublisherSupportUrl/
+          # ReleaseNotesUrl/Documentationsを補完し、副ロケールのen-USには入らない。
+          # ja-JPを正として、en-USに不足するトップレベル項目を転記する。
+          # en-US固有の値（翻訳済みの説明・PackageLocale等）はen-US側を維持し、
+          # 最終的なキーの並びはja-JPに揃える（PublisherSupportUrl等が自然な位置に入る）。
+          $dir  = "manifests/s/sacloud/usacloud/$env:VERSION"
+          $enUS = "$dir/sacloud.usacloud.locale.en-US.yaml"
+          $jaJP = "$dir/sacloud.usacloud.locale.ja-JP.yaml"
+
+          # ja-JPから転記する対象のトップレベルキー。
+          $transferKeys = @('PublisherSupportUrl', 'ReleaseNotesUrl', 'Documentations')
+
+          # マニフェストを「先頭コメント＋トップレベルキー順＋各キーのブロック」に分解する。
+          # ブロックは後続のインデント行・YAMLリスト行（行頭が英字でない行）を含む。
+          function Parse-Manifest([string]$text) {
+            $order  = New-Object System.Collections.Generic.List[string]
+            $blocks = @{}
+            $header = New-Object System.Collections.Generic.List[string]
+            $current = $null
+            foreach ($line in ($text -split "`n")) {
+              if ($line -match '^([A-Za-z][A-Za-z0-9]*):') {
+                $current = $Matches[1]; $order.Add($current)
+                $blocks[$current] = New-Object System.Collections.Generic.List[string]
+                $blocks[$current].Add($line)
+              } elseif ($null -ne $current) {
+                $blocks[$current].Add($line)
+              } else {
+                $header.Add($line)
+              }
+            }
+            return [pscustomobject]@{ Order = $order; Blocks = $blocks; Header = $header }
+          }
+
+          $en = Parse-Manifest ([System.IO.File]::ReadAllText($enUS))
+          $ja = Parse-Manifest ([System.IO.File]::ReadAllText($jaJP))
+
+          # 並びはja-JPに合わせる。en-USにあるキーはen-USの値を維持し、
+          # 不足キーのうち転記対象のものだけをja-JPから補う（既存ならそのまま＝冪等）。
+          $out = New-Object System.Collections.Generic.List[string]
+          $out.AddRange($en.Header)
+          $emitted = @{}
+          foreach ($key in $ja.Order) {
+            if ($en.Blocks.ContainsKey($key)) { $out.AddRange($en.Blocks[$key]); $emitted[$key] = $true }
+            elseif ($transferKeys -contains $key) { $out.AddRange($ja.Blocks[$key]); $emitted[$key] = $true }
+          }
+          # 念のため、en-USにのみ存在する（ja-JPに無い）キーを取りこぼさない。
+          foreach ($key in $en.Order) {
+            if (-not $emitted.ContainsKey($key)) { $out.AddRange($en.Blocks[$key]) }
+          }
+
+          # wingetcreate生成物に合わせ BOMなしUTF-8 + LF を維持する。
+          [System.IO.File]::WriteAllText($enUS, ($out -join "`n"), [System.Text.UTF8Encoding]::new($false))
+          Write-Host "en-US を再構成しました（並びはja-JPに準拠）。"
+
       - name: マニフェストを検証
         shell: pwsh
         env:
