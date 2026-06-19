@@ -147,7 +147,7 @@ jobs:
             if (-not $emitted.ContainsKey($key)) { $out.AddRange($en.Blocks[$key]) }
           }
 
-          # wingetcreate生成物に合わせ BOMなしUTF-8 + LF を維持する。
+          # BOMなしUTF-8で書き出す。改行コードは元ファイル(生成物)の形式をそのまま維持する。
           [System.IO.File]::WriteAllText($enUS, ($out -join "`n"), [System.Text.UTF8Encoding]::new($false))
           Write-Host "en-US を再構成しました（並びはja-JPに準拠）。"
 
