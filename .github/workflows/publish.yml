@@ -12,46 +12,97 @@ on:
         required: false
 
 jobs:
-  # スケジュール実行 or バージョン未指定時: 最新バージョンを取得して workflow_dispatch で再トリガー
+  # スケジュール実行 or バージョン未指定時: 未登録バージョンを検出して workflow_dispatch で再トリガー
   detect:
-    name: 最新バージョン検出
+    name: 未登録バージョン検出
     if: inputs.version == ''
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write
       actions: write
     steps:
       - name: チェックアウト
         uses: actions/checkout@v6
 
-      - name: 最新リリースバージョンを取得
-        id: release
+      - name: 未登録バージョンを洗い出す
+        id: detect
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          VERSION=$(gh release view --repo sacloud/usacloud --json tagName -q '.tagName' | sed 's/^v//')
-          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
-          echo "Latest version: ${VERSION}"
+          set -euo pipefail
+          LOCAL_DIR="manifests/s/sacloud/usacloud"
 
-      - name: 登録済みバージョンか確認
-        id: check
-        run: |
-          MANIFEST_DIR="manifests/s/sacloud/usacloud/${{ steps.release.outputs.version }}"
-          if [ -d "$MANIFEST_DIR" ]; then
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-            echo "Version ${{ steps.release.outputs.version }} already exists. Skipping."
+          # 以前は上流の最新1件だけを見て、それが登録済みなら全体を飛ばしていた。
+          # 同じ日に2件公開されると古い方が二度と拾われず、実際に v1.22.5 と
+          # v1.22.7 が欠落した。上流の安定版を全件見て未登録を洗い出す。
+          #
+          # 下限は登録済みの最古版。それより前は元から対象外なので拾わない。
+          FLOOR="$(ls "$LOCAL_DIR" | sort -V | head -1)"
+          echo "下限（登録済みの最古版）: ${FLOOR}"
+
+          MISSING=""
+          while read -r v; do
+            [ -z "$v" ] && continue
+            # 下限より古い版は対象外
+            older="$(printf '%s\n%s\n' "$v" "$FLOOR" | sort -V | head -1)"
+            if [ "$older" = "$v" ] && [ "$v" != "$FLOOR" ]; then
+              continue
+            fi
+            if [ ! -d "${LOCAL_DIR}/${v}" ]; then
+              MISSING="${MISSING} ${v}"
+            fi
+          done < <(
+            gh release list --repo sacloud/usacloud --limit 100 \
+              --json tagName,isPrerelease,isDraft \
+              --jq '.[] | select(.isPrerelease == false and .isDraft == false) | .tagName | sub("^v"; "")'
+          )
+
+          BACKLOG="$(printf '%s\n' ${MISSING} | grep -v '^$' | sort -V | tr '\n' ' ' || true)"
+          TARGET="$(printf '%s\n' ${MISSING} | grep -v '^$' | sort -V | head -1 || true)"
+
+          if [ -z "${TARGET}" ]; then
+            echo "未登録のバージョンはありません。"
+            echo "target=" >> "$GITHUB_OUTPUT"
           else
-            echo "skip=false" >> "$GITHUB_OUTPUT"
-            echo "New version ${{ steps.release.outputs.version }} detected."
+            # 一度に1件だけ公開する。winget-pkgs へのPRが一度に大量に飛ぶのを避け、
+            # 失敗時の切り分けもしやすくする。残りは翌日以降の実行で順に消化する。
+            echo "未登録: ${BACKLOG}"
+            echo "今回の対象（最も古い未登録版）: ${TARGET}"
+            echo "target=${TARGET}" >> "$GITHUB_OUTPUT"
           fi
+          echo "backlog=${BACKLOG}" >> "$GITHUB_OUTPUT"
 
       - name: 公開ワークフローをトリガー
-        if: steps.check.outputs.skip == 'false'
+        if: steps.detect.outputs.target != ''
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh workflow run publish.yml \
-            --field version=${{ steps.release.outputs.version }}
+            --field version=${{ steps.detect.outputs.target }}
+
+      - name: スケジュールの自動無効化を防ぐ
+        if: github.event_name == 'schedule' && steps.detect.outputs.target == ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # GitHub は60日間コミットが無いリポジトリのスケジュール実行を止める。
+          # 上流に新版が出ない期間が続くとこのリポジトリはコミットされないため、
+          # 気づかないうちに検出が止まる。45日を超えたら印を更新して活動を作る。
+          LAST="$(git log -1 --format=%ct)"
+          NOW="$(date +%s)"
+          DAYS=$(( (NOW - LAST) / 86400 ))
+          echo "最終コミットからの経過: ${DAYS}日"
+          if [ "${DAYS}" -lt 45 ]; then
+            echo "45日未満のため何もしません。"
+            exit 0
+          fi
+          date -u +"%Y-%m-%dT%H:%M:%SZ" > .github/last-checked
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .github/last-checked
+          git commit -m "chore: スケジュールの自動無効化を防ぐための更新"
+          git push
 
   # バージョン指定時: マニフェスト生成 & PR送信
   publish:
@@ -151,6 +202,41 @@ jobs:
           [System.IO.File]::WriteAllText($enUS, ($out -join "`n"), [System.Text.UTF8Encoding]::new($false))
           Write-Host "en-US を再構成しました（並びはja-JPに準拠）。"
 
+      - name: 壊れたURLを修正
+        shell: pwsh
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          # wingetcreate は winget-pkgs に登録済みのマニフェストを引き継ぐため、
+          # 初回登録時の誤りがそのまま次の版へ運ばれる。実際に次の2つが壊れている。
+          #
+          #   LicenseUrl  .../blob/master/LICENSE  -> 404
+          #               上流の既定ブランチは main、ファイル名は LICENSE.txt
+          #   DocumentUrl .../wiki                 -> ページが1つも無い
+          #               上流 README が案内する docs.usacloud.jp を使う
+          #
+          # PowerShell の -replace は既定で複数行モードではないため (?m) を付ける。
+          $dir = "manifests/s/sacloud/usacloud/$env:VERSION"
+          $targets = @(
+            "$dir/sacloud.usacloud.locale.en-US.yaml",
+            "$dir/sacloud.usacloud.locale.ja-JP.yaml"
+          )
+          foreach ($f in $targets) {
+            if (-not (Test-Path -LiteralPath $f)) { continue }
+            $text = Get-Content -LiteralPath $f -Raw
+            $before = $text
+            $text = $text -replace '(?m)^(\s*)LicenseUrl:\s*\S+\s*$', '$1LicenseUrl: https://github.com/sacloud/usacloud/blob/main/LICENSE.txt'
+            $text = $text -replace '(?m)^(\s*)DocumentUrl:\s*\S+\s*$', '$1DocumentUrl: https://docs.usacloud.jp/usacloud'
+            # URLを差し替えるとラベルの「Wiki」が実態と食い違うため合わせる
+            $text = $text -replace '(?m)^(\s*)(-\s*)DocumentLabel:\s*Wiki\s*$', '$1$2DocumentLabel: Documentation'
+            if ($text -ne $before) {
+              Set-Content -LiteralPath $f -Value $text -NoNewline
+              Write-Host "修正しました: $f"
+            } else {
+              Write-Host "変更なし: $f"
+            }
+          }
+
       - name: マニフェストを検証
         shell: pwsh
         env:
@@ -206,3 +292,36 @@ jobs:
           git add "manifests/s/sacloud/usacloud/${VERSION}"
           git commit -m "Add manifest for v${VERSION}"
           git push
+
+  # detect / publish のいずれかが失敗したらIssueを立てる。
+  # スケジュール実行の失敗はメールも来ず、気づかないまま公開が止まるため。
+  notify-failure:
+    name: 失敗をIssueで知らせる
+    needs: [detect, publish]
+    if: always() && (needs.detect.result == 'failure' || needs.publish.result == 'failure')
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - name: Issueを作成する
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          TITLE="winget-pkgsへの公開に失敗しました"
+          if [ -n "${VERSION}" ]; then
+            TITLE="${TITLE}（v${VERSION}）"
+          fi
+          # 同じ内容のIssueを毎日増やさないよう、未クローズの同名Issueがあれば追記に留める
+          EXISTING="$(gh issue list --state open --search "${TITLE} in:title" --json number --jq '.[0].number // empty')"
+          BODY="実行: ${RUN_URL}
+          detect: ${{ needs.detect.result }}
+          publish: ${{ needs.publish.result }}"
+          if [ -n "${EXISTING}" ]; then
+            gh issue comment "${EXISTING}" --body "${BODY}"
+          else
+            gh issue create --title "${TITLE}" --body "${BODY}" --label "公開失敗" || \
+              gh issue create --title "${TITLE}" --body "${BODY}"
+          fi
